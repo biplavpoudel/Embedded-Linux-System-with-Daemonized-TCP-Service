@@ -7,16 +7,8 @@ source shared.sh
 set -e 
 cd `dirname $0`
 
-# To speedup Buildroot using external source code caching and compiler caching
+# To speedup Buildroot using external source code caching
 export BR2_DL_DIR=${HOME}/.dl
-export BR2_USE_CCACHE=1
-export BR2_CCACHE_USE_BASEDIR=y
-export BR2_CCACHE_DIR=${HOME}/.buildroot-cache
-
-# configuring ccache
-echo "Using BR2_DL_DIR=${BR2_DL_DIR} and BR2_CCACHE_DIR=${BR2_CCACHE_DIR}"
-ccache --max-size=5G
-ccache --zero-stats
 
 EXTERNAL_REL_BUILDROOT=../base_external
 git submodule init
