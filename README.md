@@ -1,5 +1,156 @@
-# Overview
+# Embedded Linux System with Daemonized TCP Service
 
-This repository contains assignment starter code for buildroot based assignments for the course Advanced Embedded Software Design, ECEN 5713
+This project implements a **custom embedded Linux system image** with a **daemonized TCP socket service**, built and validated using **Buildroot** and **QEMU (AArch64)**.
 
-It also contains instructions related to modifying your buildroot project to use with supported hardware platforms.  See [this wiki page](https://github.com/cu-ecen-5013/buildroot-assignments-base/wiki/Supported-Hardware) for details.
+The goal of the project was not just to write a socket program, but to integrate a network service **properly into an embedded Linux environment**: cross-compilation, init scripts, signal handling, reproducible builds, and system-level validation.
+
+## Architecture
+
+                       Host machine
+                        (Ubuntu, sh)
+    ┌───────────────────────────────────────────────┐
+    │                                               │
+    │  netcat / sockettest.sh / full-test.sh        │
+    │        │                                      │
+    │        ├── TCP :9000  ─────────────────────┐  │
+    │        │                                   │  │
+    │        └── SSH/SCP :10022 ───────────────┐ │  │
+    │                                          │ │  │
+    └──────────────────────────────────────────┼─┼──┘
+                                               │ │
+                                 QEMU port fwd │ │
+                                               │ │
+                ┌──────────────────────────────▼─▼──────────────────────────────────┐
+                │                  QEMU (AArch64)                                   │
+                │            Buildroot Linux system image                           │
+                │                                                                   │
+                │  init (BusyBox)                                                   │
+                │    └── /etc/init.d/S99aesdsocket                                  │
+                │          └── start-stop-daemon                                    │
+                │                └── /usr/bin/aesdsocket -d                         │
+                │                       │                                           │
+                │                       ├─ listens on TCP :9000                     │
+                │                       ├─ syslog -> /var/log/...                   │
+                │                       └─ file state: /var/tmp/aesdsocketdata      │
+                │                                                                   │
+                │                                                                   │
+                │  dropbear (SSH server) listens on :22                             │
+                └───────────────────────────────────────────────────────────────────┘
+
+
+## Overview
+
+The system consists of three tightly integrated parts:
+
+1. **A TCP socket server (`aesdsocket`) written in C**
+2. **Service lifecycle management** (daemon mode + init integration)
+3. **A reproducible embedded Linux image** built using Buildroot and executed on QEMU
+
+The socket service listens on port **9000**, accepts newline-delimited input, appends data to a file on disk, and returns the aggregated contents to the client. The service runs as a daemon, starts automatically at boot, and shuts down cleanly when the system halts.
+
+
+## Repository Structure
+
+This project is split across two repositories by design.
+
+
+### 1. Application Code (`assignments-3-and-later`)
+
+This repository contains the **socket implementation and service logic**.
+
+**Key paths:**
+- [`server/aesdsocket.c`](https://github.com/cu-ecen-aeld/assignments-3-and-later-biplavpoudel/blob/main/server/aesdsocket.c)
+  TCP socket server implementation (POSIX sockets, syslog, signals, daemon mode)
+
+- [`server/Makefile`](https://github.com/cu-ecen-aeld/assignments-3-and-later-biplavpoudel/blob/main/server/Makefile) 
+  Supports both native compilation and cross-compilation using `CC`
+
+- [`server/aesdsocket-start-stop`](https://github.com/cu-ecen-aeld/assignments-3-and-later-biplavpoudel/blob/main/server/aesdsocket-start-stop.sh)              Init-compatible start/stop script using `start-stop-daemon`
+
+To understand **how the socket service works**, we start here.
+
+
+### 2. System Integration (Buildroot Repository)
+
+This repository is responsible for **turning the application into a bootable embedded Linux system**.
+
+**Key components:**
+- Buildroot added as a **git submodule** (2024.02.x)
+- Custom **external tree** defining the `aesd-assignments` package
+- Cross-compilation and installation of `aesdsocket` into `/usr/bin`
+- Init script installed to `/etc/init.d/S99aesdsocket`
+- Reproducible build scripts:
+  - [`build.sh`](build.sh)
+  - [`clean.sh`](clean.sh)
+  - [`save-config.sh`](save-config.sh)
+
+This is where the application becomes a **system service**, not just a binary.
+
+
+## Socket Service Behavior
+
+The `aesdsocket` service implements the following behavior:
+
+- Opens a TCP stream socket bound to **port 9000**
+- Logs client connections and disconnections using **syslog**
+- Receives data until a newline character is encountered
+- Appends completed packets to `/var/tmp/aesdsocketdata`
+- Sends the **entire contents of the file** back to the client after each packet
+- Continues accepting connections until interrupted
+- On `SIGINT` or `SIGTERM`:
+  - Completes any in-progress operations
+  - Closes open sockets
+  - Deletes `/var/tmp/aesdsocketdata`
+  - Logs `Caught signal, exiting`
+
+A `-d` flag enables **daemon mode**, which forks the process after a successful bind and detaches it from the terminal.
+
+
+## Service Lifecycle Management
+
+The socket service is integrated into the system using a traditional embedded Linux init workflow:
+
+- Managed via `start-stop-daemon`
+- PID tracked using a pidfile
+- Installed as `/etc/init.d/S99aesdsocket`
+
+This ensures:
+- Automatic startup when the system boots
+- Graceful shutdown during halt or restart
+
+
+## Embedded Linux Image
+
+The Linux image is built using **Buildroot** targeting **AArch64 QEMU**.
+
+**Image features:**
+- Custom defconfig derived from `qemu_aarch64_virt_defconfig`
+- Dropbear SSH enabled for remote access
+- Port forwarding configured:
+  - Host **9000** → Guest **9000** (socket service)
+  - Host **10022** → Guest **22** (SSH)
+
+The system can be built and launched with:
+
+```bash
+./build.sh
+./runqemu.sh
+```
+No manual interaction is required after the build completes.
+
+## Validation and Testing
+
+The project was validated using both automated and manual testing approaches:
+
+- **Automated scripts**
+  - `sockettest.sh`
+  - `full-test.sh`
+
+- **Manual testing**
+  - Interaction testing using `netcat`
+  - Remote access and file transfer verification using SSH and SCP
+
+- **Build validation**
+  - Clean rebuilds tested using `make distclean`
+
+A clean shutdown followed by a restart guarantees that no stale data persists from previous runs.
