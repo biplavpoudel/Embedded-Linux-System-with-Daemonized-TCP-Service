@@ -34,6 +34,7 @@ define AESD_ASSIGNMENTS_INSTALL_TARGET_CMDS
 	$(INSTALL) -m 0755 $(@D)/finder-app/finder-test.sh $(TARGET_DIR)/usr/bin
 
 	@echo "Installing Init script for aesdsocket"
+	$(INSTALL) -d $(TARGET_DIR)/etc/init.d
 	$(INSTALL) -m 0755 $(@D)/server/aesdsocket-start-stop.sh $(TARGET_DIR)/etc/init.d/S99aesdsocket
 
 	@echo "Installing aesdsocket binary for server from $(AESD_ASSIGNMENTS_SITE)..."
