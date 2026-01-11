@@ -30,7 +30,7 @@ The goal of the project was not just to write a socket program, but to integrate
                 │                └── /usr/bin/aesdsocket -d                         │
                 │                       │                                           │
                 │                       ├─ listens on TCP :9000                     │
-                │                       ├─ syslog -> /var/log/...                   │
+                │                       ├─ syslog                                   │
                 │                       └─ file state: /var/tmp/aesdsocketdata      │
                 │                                                                   │
                 │                                                                   │
@@ -56,7 +56,7 @@ This project is split across two repositories by design.
 
 ### 1. Application Code (`assignments-3-and-later`)
 
-This repository contains the **socket implementation and service logic**.
+[This repository](https://github.com/cu-ecen-aeld/assignments-3-and-later-biplavpoudel) contains the **socket implementation and service logic**.
 
 **Key paths:**
 - [`server/aesdsocket.c`](https://github.com/cu-ecen-aeld/assignments-3-and-later-biplavpoudel/blob/main/server/aesdsocket.c)
@@ -65,26 +65,26 @@ This repository contains the **socket implementation and service logic**.
 - [`server/Makefile`](https://github.com/cu-ecen-aeld/assignments-3-and-later-biplavpoudel/blob/main/server/Makefile) 
   Supports both native compilation and cross-compilation using `CC`
 
-- [`server/aesdsocket-start-stop`](https://github.com/cu-ecen-aeld/assignments-3-and-later-biplavpoudel/blob/main/server/aesdsocket-start-stop.sh)              Init-compatible start/stop script using `start-stop-daemon`
+- [`server/aesdsocket-start-stop`](https://github.com/cu-ecen-aeld/assignments-3-and-later-biplavpoudel/blob/main/server/aesdsocket-start-stop.sh)              init-compatible start/stop script using `start-stop-daemon`
 
 To understand **how the socket service works**, we start here.
 
 
-### 2. System Integration (Buildroot Repository)
+### 2. System Integration (`Buildroot`)
 
 This repository is responsible for **turning the application into a bootable embedded Linux system**.
 
 **Key components:**
-- Buildroot added as a **git submodule** (2024.02.x)
-- Custom **external tree** defining the `aesd-assignments` package
+- Buildroot is added as a **git submodule** [(2024.02.x)]((https://gitlab.com/buildroot.org/buildroot/))
+- Custom [**external tree**](base_external/package/aesd-assignments/aesd-assignments.mk) defines the `aesd-assignments` package
 - Cross-compilation and installation of `aesdsocket` into `/usr/bin`
-- Init script installed to `/etc/init.d/S99aesdsocket`
+- Init script is installed to `/etc/init.d/S99aesdsocket`
 - Reproducible build scripts:
   - [`build.sh`](build.sh)
   - [`clean.sh`](clean.sh)
   - [`save-config.sh`](save-config.sh)
 
-This is where the application becomes a **system service**, not just a binary.
+This is where the application is compiled into a binary and run as a **system service**.
 
 
 ## Socket Service Behavior
@@ -95,15 +95,18 @@ The `aesdsocket` service implements the following behavior:
 - Logs client connections and disconnections using **syslog**
 - Receives data until a newline character is encountered
 - Appends completed packets to `/var/tmp/aesdsocketdata`
-- Sends the **entire contents of the file** back to the client after each packet
+- Sends the **entire contents of the file** back to the client after each packet is written
 - Continues accepting connections until interrupted
 - On `SIGINT` or `SIGTERM`:
-  - Completes any in-progress operations
-  - Closes open sockets
+  - Server stops accepting new connections,
+  - Closes listening sockets
   - Deletes `/var/tmp/aesdsocketdata`
   - Logs `Caught signal, exiting`
+  - Terminates
 
 A `-d` flag enables **daemon mode**, which forks the process after a successful bind and detaches it from the terminal.
+
+The server uses a **fork-per-connection** model, allowing multiple clients to be handled concurrently. Access to `/var/tmp/aesdsocketdata` is synchronized using `flock()` to prevent file corruption across concurrent processes.
 
 
 ## Service Lifecycle Management
@@ -111,7 +114,7 @@ A `-d` flag enables **daemon mode**, which forks the process after a successful 
 The socket service is integrated into the system using a traditional embedded Linux init workflow:
 
 - Managed via `start-stop-daemon`
-- PID tracked using a pidfile
+- PID tracked using a pidfile `/tmp/aesdsocket.pid`
 - Installed as `/etc/init.d/S99aesdsocket`
 
 This ensures:
@@ -154,3 +157,10 @@ The project was validated using both automated and manual testing approaches:
   - Clean rebuilds tested using `make distclean`
 
 A clean shutdown followed by a restart guarantees that no stale data persists from previous runs.
+
+---
+## Additional Links
+1. [Beej's Guide to Network Programming](https://beej.us/guide/bgnet/html/), which is an excellent resource for socket server/client.
+2. Man pages for [accept](https://man7.org/linux/man-pages/man2/accept.2.html), [bind](https://man7.org/linux/man-pages/man2/bind.2.html), [socket](https://man7.org/linux/man-pages/man7/socket.7.html) and [start-stop-daemon](https://man7.org/linux/man-pages/man8/start-stop-daemon.8.html).
+3. [Busybox Mirror](https://github.com/mirror/busybox.git), the original git [url](git://busybox.net/busybox.git) sometimes doesn't work!
+4. For enabling **ccache** in Buildroot, follow this [documentation](https://buildroot.org/downloads/manual/manual.html#ccache).
